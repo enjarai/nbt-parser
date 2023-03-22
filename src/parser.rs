@@ -1,30 +1,55 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::string::ParseError;
-use std::u16;
-use crate::parser::Tag::{ByteTag, ByteArray, DoubleTag, EndTag, FloatTag, IntTag, LongTag, ShortTag, StringTag};
+use std::io::{BufReader, ErrorKind, Read};
+use std::string::{FromUtf8Error, ParseError};
+use std::{io, u16};
+use std::fmt::{Debug, Display, Formatter};
+use std::mem::transmute;
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
+use crate::parser::Tag::{ByteTag, ByteArray, DoubleTag, EndTag, FloatTag, IntTag, LongTag, ShortTag, StringTag, ListTag, CompoundTag, IntArray};
 
-struct Parser<'a> {
-    data: &'a Vec<u8>,
-    i: usize
+// struct Parser<'a> {
+//     data: &'a Vec<u8>,
+//     i: usize
+// }
+//
+// impl<'a> Parser<'a> {
+//     fn new(data: &Vec<u8>) -> Parser {
+//         Parser {
+//             data,
+//             i: 0
+//         }
+//     }
+//
+//     fn eat(&mut self, count: usize) -> &Vec<u8> {
+//         let output = self.data[i..i+count];
+//         self.i += count;
+//         output
+//     }
+// }
+
+#[derive(Debug)]
+pub enum TagParseErr {
+    InvalidType,
+    InvalidLength,
+    InvalidUtf8,
+    IoError(io::Error)
 }
 
-impl<'a> Parser<'a> {
-    fn new(data: &Vec<u8>) -> Parser {
-        Parser {
-            data,
-            i: 0
-        }
-    }
-
-    fn eat(&mut self, count: usize) -> &Vec<u8> {
-        let output = self.data[i..i+count];
-        self.i += count;
-        output
+impl From<io::Error> for TagParseErr {
+    fn from(err: io::Error) -> TagParseErr {
+        TagParseErr::IoError(err)
     }
 }
 
-enum Tag {
+impl From<FromUtf8Error> for TagParseErr {
+    fn from(_: FromUtf8Error) -> TagParseErr {
+        TagParseErr::InvalidUtf8
+    }
+}
+
+#[derive(Debug)]
+pub enum Tag {
     EndTag,
     ByteTag(i8),
     ShortTag(i16),
@@ -33,81 +58,90 @@ enum Tag {
     FloatTag(f32),
     DoubleTag(f64),
     ByteArray(Vec<i8>),
-    StringTag(StringTag),
+    StringTag(String),
     ListTag(Vec<Tag>),
-    CompoundTag(HashMap<StringTag, Tag>),
+    CompoundTag(HashMap<String, Tag>),
     IntArray(Vec<i32>),
     LongArray(Vec<i64>)
 }
 
 impl Tag {
-    fn parse(data: &Vec<u8>) -> Result<Tag, ParseError> {
-        let data_type = data[0];
-        let mut data = data[1..data.len()];
-        Tag::parse_type(data_type, &data)
+    pub fn parse(buf: &mut BufReader<impl Read>) -> Result<Tag, TagParseErr> {
+        Tag::parse_type(0x0A, buf)
     }
 
-    fn parse_type(data_type: u8, data: &[u8]) -> Result<Tag, ParseError> {
-        let mut data = *data;
+    fn parse_type(data_type: u8, buf: &mut BufReader<impl Read>) -> Result<Tag, TagParseErr> {
         match data_type {
-            0x0 => Ok(EndTag),
-            0x1 => {
-                if data.len() < 1 {
-                    Err(ParseError)
-                }
-                Ok(ByteTag(i8::from_be_bytes(*data)))
+            0x00 => Ok(EndTag),
+            0x01 => unsafe {
+                Ok(ByteTag(buf.read_i8()?))
             },
-            0x2 => {
-                if data.len() < 2 {
-                    Err(ParseError)
-                }
-                Ok(ShortTag(i16::from_be_bytes(*data)))
+            0x02 => {
+                Ok(ShortTag(buf.read_i16::<BigEndian>()?))
             },
-            0x3 => {
-                if data.len() < 4 {
-                    Err(ParseError)
-                }
-                Ok(IntTag(i32::from_be_bytes(*data)))
+            0x03 => {
+                Ok(IntTag(buf.read_i32::<BigEndian>()?))
             },
-            0x4 => {
-                if data.len() < 8 {
-                    Err(ParseError)
-                }
-                Ok(LongTag(i64::from_be_bytes(*data)))
+            0x04 => {
+                Ok(LongTag(buf.read_i64::<BigEndian>()?))
             },
-            0x5 => {
-                if data.len() < 4 {
-                    Err(ParseError)
-                }
-                Ok(FloatTag(f32::from_be_bytes(*data)))
+            0x05 => {
+                Ok(FloatTag(buf.read_f32::<BigEndian>()?))
             },
-            0x6 => {
-                if data.len() < 8 {
-                    Err(ParseError)
-                }
-                Ok(DoubleTag(f64::from_be_bytes(*data)))
+            0x06 => {
+                Ok(DoubleTag(buf.read_f64::<BigEndian>()?))
             },
-            0x7 => {
-                let length = i32::from_be_bytes(*eat(&mut data, 4)?);
+            // 0x07 => {
+            //     let length = i32::from_be_bytes(*eat(&mut data, 4)?);
+            //     let mut result = Vec::new();
+            //     for b in data[0..length] {
+            //         result.push(i8::from_be_bytes(b))
+            //     }
+            //     Ok(ByteArray(result))
+            // },
+            0x08 => {
+                let length = buf.read_u16::<BigEndian>()?;
+                Ok(StringTag(String::from_utf8(eat(buf, length as usize)?)?))
+            },
+            0x09 => {
+                let list_type = buf.read_u8()?;
+                let length = buf.read_i32::<BigEndian>()?;
                 let mut result = Vec::new();
-                for b in data[0..length] {
-                    result.push(i8::from_be_bytes(b))
+                for _ in 0..length {
+                    result.push(Tag::parse_type(list_type, buf)?)
                 }
-                Ok(ByteArray(result))
+                Ok(ListTag(result))
             },
-            0x8 => {
-                let length = u16::from_be_bytes(*eat(&mut data, 2)?);
-                Ok(StringTag(String::from_utf8(data[0..length])))
-            },
-            0x9 => {
+            0x0A => {
+                let mut result = HashMap::new();
+                loop {
+                    let tag_type = buf.read_u8().unwrap_or(0x00);
+                    if tag_type == 0x00 {
+                        break;
+                    }
 
-            }
+                    let name_length = buf.read_u16::<BigEndian>()?;
+                    let name = String::from_utf8(eat(buf, name_length as usize)?)?;
+                    let tag = Tag::parse_type(tag_type, buf)?;
+                    result.insert(name, tag);
+                }
+                Ok(CompoundTag(result))
+            },
+            // 0x0B => {
+            //     let length = i32::from_be_bytes(*eat(&mut data, 4)?);
+            //     let mut result = Vec::new();
+            //     for b in data[0..length] {
+            //         result.push(i32::from_be_bytes(b))
+            //     }
+            //     Ok(IntArray(result))
+            // },
+            _ => Err(TagParseErr::InvalidType)
         }
     }
 }
 
-fn eat(data: &mut [u8], length: usize) -> Result<[u8], ParseError> {
-    let result = data[0..length];
-    *data = data[length..data.len()];
+fn eat(buf: &mut BufReader<impl Read>, length: usize) -> io::Result<Vec<u8>> {
+    let mut result = vec![0u8; length];
+    buf.read_exact(&mut result)?;
     Ok(result)
 }
