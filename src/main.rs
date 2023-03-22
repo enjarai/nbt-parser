@@ -25,8 +25,9 @@ fn main() {
             };
 
             println!("Took {}ms", time.elapsed().as_millis());
+            println!("Parsed {} elements", tag.1);
             println!();
-            println!("{}", tag);
+            // println!("{}", tag.0);
         },
         Err(e) => println!("{e}")
     }

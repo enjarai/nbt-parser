@@ -44,11 +44,13 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn parse(buf: &mut BufReader<impl Read>) -> Result<Tag, TagParseErr> {
-        Tag::parse_type(0x0A, buf)
+    pub fn parse(buf: &mut BufReader<impl Read>) -> Result<(Tag, i32), TagParseErr> {
+        let mut element_counter = 0;
+        Tag::parse_type(0x0A, buf, &mut element_counter).map(|t| (t, element_counter))
     }
 
-    fn parse_type(data_type: u8, buf: &mut BufReader<impl Read>) -> Result<Tag, TagParseErr> {
+    fn parse_type(data_type: u8, buf: &mut BufReader<impl Read>, element_counter: &mut i32) -> Result<Tag, TagParseErr> {
+        *element_counter += 1;
         match data_type {
             0x00 => Ok(EndTag),
             // Byte (1 byte)
@@ -95,7 +97,7 @@ impl Tag {
                 let length = buf.read_i32::<BigEndian>()?;
                 let mut result = Vec::new();
                 for _ in 0..length {
-                    result.push(Tag::parse_type(list_type, buf)?)
+                    result.push(Tag::parse_type(list_type, buf, element_counter)?)
                 }
                 Ok(ListTag(result))
             },
@@ -110,7 +112,7 @@ impl Tag {
 
                     let name_length = buf.read_u16::<BigEndian>()?;
                     let name = String::from_utf8(eat(buf, name_length as usize)?)?;
-                    let tag = Tag::parse_type(tag_type, buf)?;
+                    let tag = Tag::parse_type(tag_type, buf, element_counter)?;
                     result.insert(name, tag);
                 }
                 Ok(CompoundTag(result))
