@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::io;
 use byteorder::{BigEndian, ReadBytesExt};
-use crate::tag::{Tag, TagError};
+use super::tag::{Tag, TagError};
 
-use crate::tag::Tag::*;
+use super::tag::Tag::*;
 
 impl Tag {
     pub fn read<T: Read>(buf: &mut T) -> Result<Tag, TagError> {

@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::string::FromUtf8Error;
 use std::io;
-use crate::tag::Tag::*;
+use Tag::*;
 
 #[derive(Debug)]
 pub enum TagError {

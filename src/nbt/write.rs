@@ -1,8 +1,8 @@
 use std::io::Write;
 use byteorder::{BigEndian, WriteBytesExt};
-use crate::tag::{Tag, TagError};
-use crate::tag::Tag::*;
-use crate::tag::TagError::InvalidType;
+use super::tag::{Tag, TagError};
+use super::tag::Tag::*;
+use super::tag::TagError::InvalidType;
 
 impl Tag {
     pub fn write<T: Write>(&self, buf: &mut T) -> Result<(), TagError> {
